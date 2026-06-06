@@ -9,7 +9,7 @@ import type { MenuInfo } from 'ant-design-vue/lib/menu/src/interface'
 import { debounce, throttle, last } from 'lodash-es'
 import { computed, watch, onMounted } from 'vue'
 import { ref } from 'vue'
-import { copy2clipboardI18n, type Dict } from '@/util'
+import { copy2clipboardI18n, globalEvents, type Dict } from '@/util'
 import { useResizeAndDrag } from './useResize'
 import {
   DragOutlined,
@@ -438,6 +438,10 @@ Please return only tag names, do not include any other content.`
 }
 
 // 编辑提示词并重新加载
+const openSavedWorkflow = () => {
+  globalEvents.emit('openSavedWorkflow', { file: props.file })
+}
+
 const editPromptAndReload = async () => {
   await openEditPromptModal(props.file)
   const path = props.file?.fullpath
@@ -505,7 +509,10 @@ const editPromptAndReload = async () => {
             <a-button>{{ t('openContextMenu') }}</a-button>
             <template #overlay>
               <a-menu @click="emit('contextMenuClick', $event, file, idx)">
-                <template v-if="global.conf?.launch_mode !== 'server'">
+                <a-menu-item v-if="global.conf?.launch_mode === 'comfyui'" key="openSavedWorkflow" @click.stop="openSavedWorkflow">
+                  {{ $t('openSavedWorkflow') }}
+                </a-menu-item>
+                <template v-if="global.conf?.launch_mode !== 'comfyui' && global.conf?.launch_mode !== 'server'">
                   <a-menu-item key="send2txt2img">{{ $t('sendToTxt2img') }}</a-menu-item>
                   <a-menu-item key="send2img2img">{{ $t('sendToImg2img') }}</a-menu-item>
                   <a-menu-item key="send2inpaint">{{ $t('sendToInpaint') }}</a-menu-item>

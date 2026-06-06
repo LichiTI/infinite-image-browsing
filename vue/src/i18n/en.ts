@@ -588,6 +588,8 @@ You can specify which snapshot to restore to when starting IIB in the global set
   // ===== Video Inline Play =====
   playInline: 'Play Here',
 
+  openSavedWorkflow: 'Open saved workflow',
+  workflowNotFound: 'No saved ComfyUI workflow was found in this image',
   // ===== Prompt Editing =====
   editPrompt: 'Edit',
   editPromptTitle: 'Edit Prompt - {name}',

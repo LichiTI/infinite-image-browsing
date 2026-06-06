@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { globalEvents } from '@/util'
 import type { Tag } from '@/api/db'
 import type { FileNodeInfo } from '@/api/files'
 import type { MenuInfo } from 'ant-design-vue/lib/menu/src/interface'
@@ -17,6 +18,15 @@ const emit = defineEmits<{
   (type: 'contextMenuClick', e: MenuInfo, file: FileNodeInfo, idx: number): void
 }>()
 
+const isComfyUI = computed(() => global.conf?.launch_mode === 'comfyui')
+const onMenuClick = (e: MenuInfo) => {
+  if (`${e.key}` === 'openSavedWorkflow') {
+    globalEvents.emit('openSavedWorkflow', { file: props.file })
+    return
+  }
+  emit('contextMenuClick', e, props.file, props.idx)
+}
+
 const tags = computed(() => {
   return (global.conf?.all_custom_tags ?? []).reduce((p, c) => {
     return [...p, { ...c, selected: !!props.selectedTag.find((v) => v.id === c.id) }]
@@ -24,7 +34,11 @@ const tags = computed(() => {
 })
 </script>
 <template>
-  <a-menu @click="emit('contextMenuClick', $event, file, idx)">
+  <a-menu @click="onMenuClick">
+    <a-menu-item v-if="isComfyUI && file.type === 'file' && isMediaFile(file.name)" key="openSavedWorkflow">
+      {{ $t('openSavedWorkflow') }}
+    </a-menu-item>
+    <a-menu-divider v-if="isComfyUI && file.type === 'file' && isMediaFile(file.name)" />
     <a-menu-item key="deleteFiles">{{ $t('deleteSelected') }}</a-menu-item>
     <a-menu-item key="openWithDefaultApp">{{ $t('openWithDefaultApp') }}</a-menu-item>
     <a-menu-item key="saveSelectedAsJson">{{ $t('saveSelectedAsJson') }}</a-menu-item>
@@ -38,7 +52,7 @@ const tags = computed(() => {
         <a-menu-item key="viewGenInfo">{{ $t('viewGenerationInfo') }}</a-menu-item>
         <a-menu-item key="tiktokView">{{ $t('tiktokView') }}</a-menu-item>
         <a-menu-divider />
-        <template v-if="global.conf?.launch_mode !== 'server'">
+        <template v-if="!isComfyUI && global.conf?.launch_mode !== 'server'">
           <a-menu-item key="send2txt2img">{{ $t('sendToTxt2img') }}</a-menu-item>
           <a-menu-item key="send2img2img">{{ $t('sendToImg2img') }}</a-menu-item>
           <a-menu-item key="send2inpaint">{{ $t('sendToInpaint') }}</a-menu-item>

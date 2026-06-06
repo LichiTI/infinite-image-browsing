@@ -236,6 +236,14 @@ class ComfyUILiteApi:
             target = self._resolve_trusted_path(path)
             return self._read_comfyui_geninfo(target)
 
+        @app.get(f"{base}/comfyui_workflow")
+        async def comfyui_workflow(path: str):
+            target = self._resolve_trusted_path(path)
+            workflow = self._read_comfyui_workflow(target)
+            if not workflow:
+                raise HTTPException(status_code=404, detail="No ComfyUI workflow found in this image")
+            return workflow
+
         @app.post(f"{base}/update_exif")
         async def update_exif(req: UpdateExifReq):
             # The full backend stores edited prompt metadata in IIB's DB. The
@@ -953,6 +961,33 @@ class ComfyUILiteApi:
         except Exception as exc:
             logger.error("Failed to generate image thumbnail. path=%s error=%s", path, exc)
             raise HTTPException(status_code=415, detail=f"Unable to generate image thumbnail: {exc}")
+
+    def _read_comfyui_workflow(self, path: Path) -> Dict[str, Any]:
+        if not path.exists() or not path.is_file() or not is_image_file(str(path)):
+            return {}
+        try:
+            with Image.open(path) as img:
+                if img.format == "PNG":
+                    workflow = img.info.get("workflow")
+                    prompt = img.info.get("prompt")
+                    return {
+                        "workflow": json.loads(workflow) if isinstance(workflow, str) and workflow else None,
+                        "prompt": json.loads(prompt) if isinstance(prompt, str) and prompt else None,
+                    }
+                if img.format in ("WEBP", "JPEG", "JPG"):
+                    exif = img.info.get("exif")
+                    if not exif:
+                        return {}
+                    split = [x.decode("utf-8", errors="ignore") for x in exif.split(b"\x00")]
+                    workflow_str = next((x for x in split if x.lower().startswith("workflow:")), None)
+                    prompt_str = next((x for x in split if x.lower().startswith("prompt:")), None)
+                    return {
+                        "workflow": json.loads(workflow_str.split(":", 1)[1]) if workflow_str else None,
+                        "prompt": json.loads(prompt_str.split(":", 1)[1]) if prompt_str else None,
+                    }
+        except Exception as exc:
+            logger.debug("Failed to read ComfyUI workflow for %s: %s", path, exc)
+        return {}
 
     def _read_comfyui_geninfo(self, path: Path) -> str:
         if not path.exists() or not path.is_file() or not is_image_file(str(path)):

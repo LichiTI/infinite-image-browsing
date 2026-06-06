@@ -196,6 +196,11 @@ export const getImageExif = async (path: string) => {
     .data as Record<string, string>
 }
 
+export const getComfyUIWorkflow = async (path: string) => {
+  const resp = await axiosInst.value.get('/comfyui_workflow', { params: { path } })
+  return resp.data as { workflow?: object; prompt?: object }
+}
+
 export const getImageGenerationInfoBatch = async (paths: string[]) => {
   if (!paths.length) {
     return {}

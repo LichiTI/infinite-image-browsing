@@ -566,6 +566,8 @@ export const zhHans = {
   // ===== 视频原地播放 =====
   playInline: '在此播放',
 
+  openSavedWorkflow: '打开保存的工作流',
+  workflowNotFound: '这张图片里没有保存的 ComfyUI 工作流',
   // ===== 提示词编辑 =====
   editPrompt: '编辑',
   editPromptTitle: '编辑提示词 - {name}',

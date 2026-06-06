@@ -2,7 +2,7 @@ import { Button, Input, Modal, message, Spin } from 'ant-design-vue'
 import { StyleValue, ref } from 'vue'
 import * as Path from '@/util/path'
 import { FileNodeInfo, mkdirs } from '@/api/files'
-import { setTargetFrameAsCover, getImageGenerationInfo } from '@/api'
+import { setTargetFrameAsCover, getImageGenerationInfo, getComfyUIWorkflow } from '@/api'
 import { parse } from '@/util/stable-diffusion-image-metadata'
 import { t } from '@/i18n'
 import { downloadFiles, globalEvents, toRawFileUrl, toStreamVideoUrl, toStreamAudioUrl } from '@/util'
@@ -59,6 +59,19 @@ const openMediaModalImpl = (
   const videoRef = ref<HTMLVideoElement | null>(null)
   const imageGenInfo = ref('')
   const promptLoading = ref(false)
+
+  const openSavedWorkflowInComfyUI = async () => {
+    if (global.conf?.launch_mode !== 'comfyui') return
+    try {
+      const workflow = await getComfyUIWorkflow(file.fullpath)
+      const targetWindow = window.parent && window.parent !== window ? window.parent : window
+      targetWindow.postMessage({ type: 'iib-open-comfyui-workflow', workflow, file: file.fullpath }, window.location.origin)
+      message.success(t('openSavedWorkflow'))
+    } catch (error) {
+      console.error('Open ComfyUI workflow error:', error)
+      message.error(t('workflowNotFound'))
+    }
+  }
 
   // 加载提示词
   const loadPrompt = async () => {
@@ -217,6 +230,11 @@ const openMediaModalImpl = (
 
         {/* 操作按钮 */}
         <div class="actions" style={{ marginTop: '16px' }}>
+          {global.conf?.launch_mode === 'comfyui' && mediaType !== 'audio' && (
+            <Button type="primary" onClick={openSavedWorkflowInComfyUI}>
+              {{ default: t('openSavedWorkflow') }}
+            </Button>
+          )}
           <Button onClick={() => downloadFiles([toRawFileUrl(file, true)])}>
             {{
               icon: <DownloadOutlined/>,

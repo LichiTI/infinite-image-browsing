@@ -568,6 +568,8 @@ export const zhHant: Partial<IIBI18nMap> = {
   // ===== 視頻原地播放 =====
   playInline: '在此播放',
 
+  openSavedWorkflow: '開啟儲存的工作流',
+  workflowNotFound: '這張圖片裡沒有儲存的 ComfyUI 工作流',
   // ===== 提示詞編輯 =====
   editPrompt: '編輯',
   editPromptTitle: '編輯提示詞 - {name}',

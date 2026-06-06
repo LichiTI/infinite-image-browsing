@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, watch, ref } from 'vue'
-import { getGlobalSetting, setAppFeSetting } from './api'
+import { getGlobalSetting, setAppFeSetting, getComfyUIWorkflow } from './api'
 import { useGlobalStore, presistKeys, type FileTransferTabPane } from './store/useGlobalStore'
 import { useWorkspeaceSnapshot } from './store/useWorkspeaceSnapshot'
 import { getQuickMovePaths } from '@/page/taskRecord/autoComplete'
@@ -192,6 +192,18 @@ useGlobalEventListen('updateGlobalSetting', async () => {
 })
 
 
+
+useGlobalEventListen('openSavedWorkflow', async ({ file }) => {
+  try {
+    const workflow = await getComfyUIWorkflow(file.fullpath)
+    const targetWindow = window.parent && window.parent !== window ? window.parent : window
+    targetWindow.postMessage({ type: 'iib-open-comfyui-workflow', workflow, file: file.fullpath }, window.location.origin)
+    message.success(t('openSavedWorkflow'))
+  } catch (error) {
+    console.error('Open ComfyUI workflow error:', error)
+    message.error(t('workflowNotFound'))
+  }
+})
 
 useGlobalEventListen('returnToIIB', async () => {
   const conf = globalStore.conf

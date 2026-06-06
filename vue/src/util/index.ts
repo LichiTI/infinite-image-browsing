@@ -108,6 +108,7 @@ export const { useEventListen: useGlobalEventListen, eventEmitter: globalEvents 
     updateGlobalSettingDone(): void
     refreshFileView(args?: { paths?: string[] }): void
     openPromptEditor(data: { file: { name: string; fullpath: string }}): void
+    openSavedWorkflow(data: { file: { name: string; fullpath: string }}): void
     promptEditorUpdated(): void
   }>()
 

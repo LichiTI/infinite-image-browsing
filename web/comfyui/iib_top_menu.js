@@ -18,6 +18,30 @@ const openIIB = (event = {}) => {
     window.open(url, "_blank");
 };
 
+const openWorkflowFromIIB = async (payload) => {
+    const data = payload?.workflow;
+    const workflow = data?.workflow ?? data;
+    if (!workflow) {
+        alert("这张图片里没有保存的 ComfyUI 工作流");
+        return;
+    }
+    try {
+        if (typeof app.loadGraphData === "function") {
+            await app.loadGraphData(workflow);
+        } else if (app.graph && typeof app.graph.configure === "function") {
+            app.graph.configure(workflow);
+            app.graph.setDirtyCanvas?.(true, true);
+        } else {
+            throw new Error("当前 ComfyUI 前端不支持 loadGraphData");
+        }
+        window.focus();
+        console.info("Infinite Image Browsing: loaded workflow from image", payload?.file);
+    } catch (error) {
+        console.error("Infinite Image Browsing: failed to load workflow", error);
+        alert(`打开保存的工作流失败：${error?.message ?? error}`);
+    }
+};
+
 const getComfyUIFrontendVersion = async () => {
     try {
         if (window.__COMFYUI_FRONTEND_VERSION__) {
@@ -145,6 +169,12 @@ const createExtensionObject = (useActionBar) => {
     const extensionObj = {
         name: "InfiniteImageBrowsing.TopMenu",
         async setup() {
+            window.addEventListener("message", (event) => {
+                if (event.origin !== window.location.origin) return;
+                if (event.data?.type === "iib-open-comfyui-workflow") {
+                    openWorkflowFromIIB(event.data);
+                }
+            });
             injectStyles();
             if (!useActionBar) {
                 await attachLegacyTopMenuButton();
