@@ -25,19 +25,28 @@ export const getQuickMovePaths = async ({
 }: ReturnTypeAsync<typeof getGlobalSetting>): Promise<QuickMovePath[]> => {
   if (launch_mode === 'comfyui') {
     const g = useGlobalStore() as any
-    g.extraPathAliasMap = extra_paths
+    const paths = extra_paths ?? []
+    const parseTypes = (pathModel: ExtraPathModel, idx: number): (ExtraPathType | 'preset')[] => {
+      const fromTypes = Array.isArray(pathModel.types) ? pathModel.types : []
+      const fromType = typeof (pathModel as any).type === 'string'
+        ? (pathModel as any).type.split('+').filter(Boolean)
+        : []
+      const merged = Array.from(new Set([...(idx === 0 ? ['walk', 'scanned-fixed', 'cli_access_only'] : []), ...fromTypes, ...fromType])) as (ExtraPathType | 'preset')[]
+      return merged.length ? merged : ['scanned-fixed']
+    }
+    g.extraPathAliasMap = paths
       .filter((v: ExtraPathModel) => v.alias)
       .reduce((acc, v: ExtraPathModel) => {
         acc[v.alias!] = v.path
         return acc
       }, {} as Record<string, string>)
     await delay(0)
-    return extra_paths.map((pathModel: ExtraPathModel, idx: number): QuickMovePath => ({
+    return paths.map((pathModel: ExtraPathModel, idx: number): QuickMovePath => ({
       key: idx === 0 ? 'comfyui_output' : pathModel.path,
       zh: pathModel.alias || (idx === 0 ? '输出文件夹' : g.getShortPath(pathModel.path)),
       dir: pathModel.path,
       can_delete: idx !== 0,
-      types: idx === 0 ? ['walk', 'scanned-fixed', 'cli_access_only'] : pathModel.types
+      types: parseTypes(pathModel, idx)
     }))
   }
   

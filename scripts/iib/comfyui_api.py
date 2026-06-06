@@ -868,7 +868,7 @@ class ComfyUILiteApi:
 
     def _global_extra_paths(self) -> List[Dict[str, Any]]:
         output = str(self.config.output_dir)
-        paths = [{"path": output, "type": "walk+cli_only", "name": "ComfyUI 输出文件夹"}]
+        paths = [{"path": output, "type": "walk+scanned-fixed+cli_access_only", "name": "ComfyUI 输出文件夹"}]
         paths.extend(
             {
                 "path": item["path"],
