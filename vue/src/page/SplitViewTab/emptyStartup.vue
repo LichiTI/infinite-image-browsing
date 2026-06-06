@@ -43,6 +43,7 @@ const compCnMap: Partial<Record<TabPane['type'], string>> = {
   'fuzzy-search': t('fuzzy-search'),
   'topic-search': t('topicSearchExperimental'),
   'batch-download': t('batchDownload') + ' / ' + t('archive'),
+  'img-sli': t('imgCompare'),
   'global-setting': t('globalSettings'),
 }
 type FileTransModeIn = 'preset' | ExtraPathType
@@ -52,8 +53,16 @@ const createPane = (type: TabPane['type'], path?: string, mode?: FileTransModeIn
     case 'grid-view':
     case 'tag-search-matched-image-grid':
     case 'topic-search-matched-image-grid':
-    case 'img-sli':
       return
+    case 'img-sli':
+      pane = {
+        type,
+        name: compCnMap[type]!,
+        key: Date.now() + uniqueId(),
+        left: undefined as any,
+        right: undefined as any
+      }
+      break
     case 'global-setting':
     case 'tag-search':
     case 'batch-download':
@@ -326,7 +335,7 @@ const modes = computed(() => {
           </template>
         </ul>
       </div>
-      <div class="feature-item" v-if="!isComfyUI">
+      <div class="feature-item">
         <h2>{{ $t('launch') }}</h2>
         <ul>
           <li v-for="comp in Object.keys(compCnMap) as TabPane['type'][]" :key="comp" class="item"
