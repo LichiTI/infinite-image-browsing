@@ -12,8 +12,10 @@ import { onMounted } from 'vue'
 import { isTauri } from '@/util/env'
 import { message } from 'ant-design-vue'
 import { useSettingSync } from '@/util'
+import { useImgSliStore } from '@/store/useImgSli'
 
 const global = useGlobalStore()
+const sliStore = useImgSliStore()
 
 const props = defineProps<{
   tabIdx: number; paneIdx: number, popAddPathModal?: {
@@ -55,14 +57,8 @@ const createPane = (type: TabPane['type'], path?: string, mode?: FileTransModeIn
     case 'topic-search-matched-image-grid':
       return
     case 'img-sli':
-      pane = {
-        type,
-        name: compCnMap[type]!,
-        key: Date.now() + uniqueId(),
-        left: undefined as any,
-        right: undefined as any
-      }
-      break
+      sliStore.opened = true
+      return
     case 'global-setting':
     case 'tag-search':
     case 'batch-download':

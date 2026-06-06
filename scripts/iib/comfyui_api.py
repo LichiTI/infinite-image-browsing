@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import hashlib
+import json
 import mimetypes
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from typing import Any, Dict, Iterable, List, Optional
@@ -28,6 +30,7 @@ from scripts.iib.tool import (
     is_image_file,
     is_media_file,
     is_video_file,
+    parse_generation_parameters,
 )
 
 try:
@@ -52,6 +55,32 @@ class PathReq(BaseModel):
 class UpdateExifReq(BaseModel):
     path: str
     exif: str
+
+
+class ExtraPathReq(BaseModel):
+    path: str
+    types: List[str] = []
+    alias: Optional[str] = None
+
+
+class FilePathsReq(BaseModel):
+    file_paths: List[str]
+
+
+class FileTransferReq(FilePathsReq):
+    dest: str
+    create_dest_folder: Optional[bool] = False
+    continue_on_error: Optional[bool] = False
+
+
+class MkdirsReq(BaseModel):
+    dest_folder: str
+
+
+class VideoCoverReq(BaseModel):
+    path: str
+    base64_img: str
+    updated_time: str = ""
 
 
 class ComfyUILiteConfig:
@@ -84,7 +113,11 @@ class ComfyUILiteApi:
     def __init__(self, config: ComfyUILiteConfig) -> None:
         self.config = config
         self.cache_base_dir = get_cache_dir()
+        self.extra_paths = self._read_extra_paths()
         self.folder_cache: Dict[str, _FolderCacheEntry] = {}
+        self.search_index: List[Dict[str, Any]] = []
+        self.tag_index: Dict[str, Dict[str, Any]] = {}
+        self.search_index_roots_key = ""
 
     def create_app(self) -> FastAPI:
         app = FastAPI()
@@ -118,24 +151,18 @@ class ComfyUILiteApi:
         async def global_setting():
             output = str(self.config.output_dir)
             return {
-                "global_setting": {},
+                "global_setting": self._read_app_fe_setting("global"),
                 "cwd": output,
                 "is_win": os.name == "nt",
                 "home": "",
                 "sd_cwd": output,
                 "all_custom_tags": [],
-                "extra_paths": [
-                    {
-                        "path": output,
-                        "type": "walk+cli_only",
-                        "name": "输出文件夹",
-                    }
-                ],
-                "enable_access_control": True,
+                "extra_paths": self._global_extra_paths(),
+                "enable_access_control": False,
                 "launch_mode": "comfyui",
                 "export_fe_fn": True,
-                "app_fe_setting": {},
-                "is_readonly": True,
+                "app_fe_setting": self._read_all_app_fe_settings(),
+                "is_readonly": False,
             }
 
         @app.get(f"{base}/version")
@@ -263,6 +290,65 @@ class ComfyUILiteApi:
                     res[item] = ""
             return res
 
+        @app.post(f"{base}/db/update_image_data")
+        async def update_image_data():
+            # Build a lightweight filename/path/prompt index for ComfyUI mode.
+            # It does not implement the full IIB tag DB, but it makes the
+            # search pages actually useful instead of only returning success.
+            self._rebuild_search_index()
+            return {"success": True, "count": len(self.search_index)}
+
+        @app.post(f"{base}/db/rebuild_index")
+        async def rebuild_index():
+            self._rebuild_search_index(force=True)
+            return {"success": True, "count": len(self.search_index)}
+
+        @app.get(f"{base}/db/extra_paths")
+        async def get_extra_paths():
+            return self.extra_paths
+
+        @app.post(f"{base}/db/extra_paths")
+        async def add_extra_path(req: ExtraPathReq):
+            target = self._resolve_path(req.path, allow_any_existing=True)
+            if not target.exists() or not target.is_dir():
+                raise HTTPException(status_code=404, detail="Folder does not exist")
+            self._upsert_extra_path(str(target), req.types or ["scanned-fixed"], req.alias)
+            return {"success": True}
+
+        @app.delete(f"{base}/db/extra_paths")
+        async def remove_extra_path(req: ExtraPathReq):
+            self._remove_extra_path(req.path, req.types)
+            return {"success": True}
+
+        @app.post(f"{base}/db/alias_extra_path")
+        async def alias_extra_path(req: ExtraPathReq):
+            self._upsert_extra_path(req.path, req.types or [], req.alias)
+            return {"success": True}
+
+        @app.post(f"{base}/db/match_images_by_tags")
+        async def match_images_by_tags(request: Request):
+            body = await request.json()
+            self._ensure_search_index()
+            return self._match_images_by_tags(body)
+
+        @app.post(f"{base}/db/search_by_substr")
+        async def search_by_substr(request: Request):
+            body = await request.json()
+            self._ensure_search_index()
+            return self._search_by_substr(body)
+
+        @app.get(f"{base}/db/expired_dirs")
+        async def expired_dirs():
+            return {"expired": False, "expired_dirs": []}
+
+        @app.get(f"{base}/db/random_images")
+        async def random_images():
+            return []
+
+        @app.get(f"{base}/db/img_selected_custom_tag")
+        async def img_selected_custom_tag(path: str):
+            return []
+
         @app.post(f"{base}/db/get_image_tags")
         async def get_image_tags(req: PathsReq):
             # The existing FileItem flow asks for tags for visible files. The
@@ -287,7 +373,9 @@ class ComfyUILiteApi:
 
         @app.get(f"{base}/db/basic_info")
         async def get_db_basic_info():
-            return {"img_count": 0, "tags": [], "expired": False, "expired_dirs": []}
+            self._ensure_search_index()
+            tags = sorted(self.tag_index.values(), key=lambda item: (-item["count"], item["type"], item["name"]))
+            return {"img_count": len(self.search_index), "tags": tags, "expired": False, "expired_dirs": []}
 
         @app.get(f"{base}/image_exif")
         async def image_exif(path: str):
@@ -306,18 +394,60 @@ class ComfyUILiteApi:
             res: Dict[str, bool] = {}
             for item in req.paths:
                 try:
-                    res[item] = self._resolve_trusted_path(item, allow_root_parent=True).exists()
+                    res[item] = self._resolve_path(item, allow_any_existing=True).exists()
                 except HTTPException:
                     res[item] = False
             return res
 
+        @app.post(f"{base}/mkdirs")
+        async def mkdirs(req: MkdirsReq):
+            target = self._resolve_path(req.dest_folder, allow_any_existing=True)
+            target.mkdir(parents=True, exist_ok=True)
+            return {"success": True}
+
+        @app.post(f"{base}/copy_files")
+        async def copy_files(req: FileTransferReq):
+            return {"files": self._copy_or_move_files(req.file_paths, req.dest, move=False, create_dest_folder=bool(req.create_dest_folder))}
+
+        @app.post(f"{base}/move_files")
+        async def move_files(req: FileTransferReq):
+            return {"files": self._copy_or_move_files(req.file_paths, req.dest, move=True, create_dest_folder=bool(req.create_dest_folder))}
+
+        @app.post(f"{base}/delete_files")
+        async def delete_files(req: FilePathsReq):
+            for item in req.file_paths:
+                target = self._resolve_path(item, allow_any_existing=True)
+                if target.exists() and target.is_file():
+                    target.unlink()
+            return {"ok": True}
+
+        @app.post(f"{base}/set_target_frame_as_video_cover")
+        async def set_target_frame_as_video_cover(req: VideoCoverReq):
+            # Video cover caching is optional in ComfyUI-lite; accepting this
+            # endpoint prevents preview toolbar actions from failing with 404.
+            return {"success": True}
+
         @app.post(f"{base}/app_fe_setting")
-        async def app_fe_setting():
-            # Read-only ComfyUI build keeps UI state in browser storage.
+        async def app_fe_setting(request: Request):
+            body = await request.json()
+            name = str(body.get("name", "")).strip()
+            value = body.get("value", "{}")
+            if not name:
+                raise HTTPException(status_code=400, detail="name is required")
+            if not isinstance(value, str):
+                value = json.dumps(value, ensure_ascii=False)
+            self._write_app_fe_setting(name, value)
             return {"success": True}
 
         @app.delete(f"{base}/app_fe_setting")
-        async def remove_app_fe_setting():
+        async def remove_app_fe_setting(request: Request):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            name = str(body.get("name", "")).strip()
+            if name:
+                self._delete_app_fe_setting(name)
             return {"success": True}
 
     def _index_response(self) -> Response:
@@ -337,9 +467,14 @@ class ComfyUILiteApi:
         return FileResponse(str(target))
 
     def _resolve_trusted_path(self, raw_path: str, allow_root_parent: bool = False) -> Path:
+        return self._resolve_path(raw_path, allow_root_parent=allow_root_parent, allow_any_existing=True)
+
+    def _resolve_path(self, raw_path: str, allow_root_parent: bool = False, allow_any_existing: bool = False) -> Path:
         if raw_path in ("", "/"):
             return self.config.output_dir
         target = Path(raw_path).expanduser().resolve()
+        if allow_any_existing:
+            return target
         roots: Iterable[Path] = self.config.allowed_roots
         for root in roots:
             try:
@@ -352,7 +487,7 @@ class ComfyUILiteApi:
                         return target
                     except ValueError:
                         pass
-        raise HTTPException(status_code=403, detail="Path is outside ComfyUI output/input directories")
+        raise HTTPException(status_code=403, detail="Path is outside configured directories")
 
     def _file_info(self, path: Path) -> Dict[str, Any]:
         stat = path.stat()
@@ -430,6 +565,359 @@ class ComfyUILiteApi:
                 logger.debug("Skip directory cover item %s: %s", entry.path, exc)
         return media_files
 
+    def _index_roots(self) -> List[Path]:
+        roots: List[Path] = [self.config.output_dir]
+        if self.config.input_dir and self.config.input_dir.exists():
+            roots.append(self.config.input_dir)
+        for item in self.extra_paths:
+            try:
+                path = Path(item.get("path", "")).expanduser().resolve()
+                if path.exists() and path.is_dir():
+                    roots.append(path)
+            except Exception:
+                pass
+        unique: List[Path] = []
+        seen = set()
+        for root in roots:
+            key = str(root)
+            if key not in seen:
+                seen.add(key)
+                unique.append(root)
+        return unique
+
+    def _ensure_search_index(self) -> None:
+        roots = self._index_roots()
+        roots_key = "|".join(str(root) for root in roots)
+        if not self.search_index or self.search_index_roots_key != roots_key:
+            self._rebuild_search_index()
+
+    def _rebuild_search_index(self, force: bool = False) -> None:
+        roots = self._index_roots()
+        roots_key = "|".join(str(root) for root in roots)
+        if self.search_index and self.search_index_roots_key == roots_key and not force:
+            return
+        files: List[Dict[str, Any]] = []
+        tag_map: Dict[str, Dict[str, Any]] = {}
+        max_items = 50000
+        for root in roots:
+            try:
+                for dirpath, dirnames, filenames in os.walk(root):
+                    # Avoid walking common cache/hidden folders indefinitely.
+                    dirnames[:] = [
+                        d for d in dirnames
+                        if not d.startswith(".") and d not in {"__pycache__", "node_modules", "venv", "env"}
+                    ]
+                    for filename in filenames:
+                        path = Path(dirpath) / filename
+                        if not is_media_file(str(path)):
+                            continue
+                        try:
+                            info = self._file_info(path)
+                            info["_search_text"] = self._build_search_text(path)
+                            info["_tag_ids"] = self._extract_tags_for_item(path, info.get("_search_text", ""), tag_map)
+                            files.append(info)
+                        except Exception as exc:
+                            logger.debug("Skip indexing %s: %s", path, exc)
+                        if len(files) >= max_items:
+                            logger.warning("ComfyUI-lite search index reached %s items; remaining files skipped", max_items)
+                            self.search_index = files
+                            self.tag_index = tag_map
+                            self.search_index_roots_key = roots_key
+                            return
+            except Exception as exc:
+                logger.debug("Skip indexing root %s: %s", root, exc)
+        self.search_index = files
+        self.tag_index = tag_map
+        self.search_index_roots_key = roots_key
+
+    def _build_search_text(self, path: Path) -> str:
+        parts = [path.name, str(path)]
+        # Prompt parsing is relatively expensive, so only read it when building
+        # the lightweight index. This enables fuzzy text search by prompt/model
+        # for ComfyUI images without a full DB.
+        if is_image_file(str(path)):
+            try:
+                parts.append(self._read_comfyui_geninfo(path))
+            except Exception:
+                pass
+        return "\n".join(part for part in parts if part).lower()
+
+    def _extract_tags_for_item(self, path: Path, raw_info: str, tag_map: Dict[str, Dict[str, Any]]) -> List[str]:
+        tag_ids: set[str] = set()
+
+        def add_tag(tag_type: str, name: str, display_name: Optional[str] = None) -> None:
+            clean_name = str(name or "").strip()
+            if not clean_name:
+                return
+            tag_id = f"{tag_type}:{clean_name.lower()}"
+            if tag_id not in tag_map:
+                tag_map[tag_id] = {
+                    "id": tag_id,
+                    "name": clean_name,
+                    "display_name": display_name,
+                    "type": tag_type,
+                    "color": "",
+                    "count": 0,
+                }
+            tag_map[tag_id]["count"] += 1
+            tag_ids.add(tag_id)
+
+        fullpath = str(path)
+        if is_image_file(fullpath):
+            add_tag("Media Type", "image")
+        elif is_video_file(fullpath):
+            add_tag("Media Type", "video")
+        elif is_audio_file(fullpath):
+            add_tag("Media Type", "audio")
+
+        suffix = path.suffix.lower().lstrip(".")
+        if suffix:
+            add_tag("File Extension", suffix)
+
+        if raw_info:
+            try:
+                params = parse_generation_parameters(raw_info)
+                for tag in params.get("pos_prompt", [])[:512]:
+                    add_tag("pos", str(tag))
+                for lora in params.get("lora", []):
+                    add_tag("lora", str(lora.get("name", "")))
+                for lyco in params.get("lyco", []):
+                    add_tag("lyco", str(lyco.get("name", "")))
+                for key, value in params.get("meta", {}).items():
+                    key_s = str(key).strip()
+                    value_s = str(value).strip()
+                    if not key_s or not value_s:
+                        continue
+                    if key_s in {"Steps", "Seed", "CFG scale", "Sampler", "Scheduler", "Model", "Model hash", "VAE", "Size", "Source Identifier"}:
+                        add_tag(key_s, value_s)
+            except Exception as exc:
+                logger.debug("Failed to extract tags for %s: %s", path, exc)
+        return list(tag_ids)
+
+    def _match_images_by_tags(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        def as_set(key: str) -> set[str]:
+            return {str(v) for v in (body.get(key) or []) if str(v)}
+
+        and_tags = as_set("and_tags")
+        or_tags = as_set("or_tags")
+        not_tags = as_set("not_tags")
+        requested_folders = body.get("folder_paths") or []
+        random_sort = bool(body.get("random_sort"))
+        try:
+            size = max(1, min(int(body.get("size") or 200), 1000))
+        except Exception:
+            size = 200
+        try:
+            offset = max(0, int(body.get("cursor") or 0))
+        except Exception:
+            offset = 0
+
+        folder_roots: List[Path] = []
+        for folder in requested_folders:
+            try:
+                path = self._resolve_path(str(folder), allow_any_existing=True)
+                if path.exists():
+                    folder_roots.append(path)
+            except Exception:
+                pass
+
+        matched: List[Dict[str, Any]] = []
+        for item in self.search_index:
+            fullpath = item.get("fullpath", "")
+            if folder_roots:
+                try:
+                    p = Path(fullpath).resolve()
+                    if not any(self._is_relative_to(p, root) for root in folder_roots):
+                        continue
+                except Exception:
+                    continue
+            item_tags = set(item.get("_tag_ids", []))
+            if and_tags and not and_tags.issubset(item_tags):
+                continue
+            if or_tags and not (or_tags & item_tags):
+                continue
+            if not_tags and (not_tags & item_tags):
+                continue
+            clean = {k: v for k, v in item.items() if not k.startswith("_")}
+            matched.append(clean)
+
+        if random_sort:
+            import random
+            random.shuffle(matched)
+
+        page = matched[offset:offset + size]
+        next_offset = offset + len(page)
+        return {
+            "files": page,
+            "cursor": {
+                "has_next": next_offset < len(matched),
+                "next": str(next_offset),
+                "next_cursor": str(next_offset),
+            },
+        }
+
+    def _search_by_substr(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        query = str(body.get("surstr") or "").strip()
+        path_only = bool(body.get("path_only"))
+        regexp = str(body.get("regexp") or "").strip()
+        media_type = str(body.get("media_type") or "all")
+        requested_folders = body.get("folder_paths") or []
+        try:
+            size = max(1, min(int(body.get("size") or 200), 1000))
+        except Exception:
+            size = 200
+        try:
+            offset = max(0, int(body.get("cursor") or 0))
+        except Exception:
+            offset = 0
+
+        import re
+        pattern = None
+        if regexp and query:
+            try:
+                pattern = re.compile(query, re.IGNORECASE)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid regular expression: {exc}")
+
+        folder_roots: List[Path] = []
+        for folder in requested_folders:
+            try:
+                path = self._resolve_path(str(folder), allow_any_existing=True)
+                if path.exists():
+                    folder_roots.append(path)
+            except Exception:
+                pass
+
+        matched: List[Dict[str, Any]] = []
+        query_lower = query.lower()
+        for item in self.search_index:
+            fullpath = item.get("fullpath", "")
+            if folder_roots:
+                try:
+                    p = Path(fullpath).resolve()
+                    if not any(self._is_relative_to(p, root) for root in folder_roots):
+                        continue
+                except Exception:
+                    continue
+            if media_type == "image" and not is_image_file(fullpath):
+                continue
+            if media_type == "video" and not is_video_file(fullpath):
+                continue
+            haystack = fullpath.lower() if path_only else str(item.get("_search_text", ""))
+            if query_lower:
+                if pattern:
+                    if not pattern.search(haystack):
+                        continue
+                elif query_lower not in haystack:
+                    continue
+            clean = {k: v for k, v in item.items() if not k.startswith("_")}
+            matched.append(clean)
+
+        page = matched[offset:offset + size]
+        next_offset = offset + len(page)
+        return {
+            "files": page,
+            "cursor": {
+                "has_next": next_offset < len(matched),
+                "next": str(next_offset),
+                "next_cursor": str(next_offset),
+            },
+        }
+
+    @staticmethod
+    def _is_relative_to(path: Path, root: Path) -> bool:
+        try:
+            path.relative_to(root)
+            return True
+        except ValueError:
+            return False
+
+    def _copy_or_move_files(self, file_paths: List[str], dest: str, move: bool, create_dest_folder: bool = False) -> List[Dict[str, Any]]:
+        dest_path = self._resolve_path(dest, allow_any_existing=True)
+        if create_dest_folder:
+            dest_path.mkdir(parents=True, exist_ok=True)
+        if not dest_path.exists() or not dest_path.is_dir():
+            raise HTTPException(status_code=404, detail="Destination folder does not exist")
+        result: List[Dict[str, Any]] = []
+        for item in file_paths:
+            src = self._resolve_path(item, allow_any_existing=True)
+            if not src.exists() or not src.is_file():
+                continue
+            target = dest_path / src.name
+            if target.exists():
+                stem, suffix = target.stem, target.suffix
+                i = 1
+                while target.exists():
+                    target = dest_path / f"{stem} ({i}){suffix}"
+                    i += 1
+            if move:
+                shutil.move(str(src), str(target))
+            else:
+                shutil.copy2(str(src), str(target))
+            result.append(self._file_info(target))
+        self.folder_cache.clear()
+        return result
+
+    def _global_extra_paths(self) -> List[Dict[str, Any]]:
+        output = str(self.config.output_dir)
+        paths = [{"path": output, "type": "walk+cli_only", "name": "ComfyUI 输出文件夹"}]
+        paths.extend(
+            {
+                "path": item["path"],
+                "type": "+".join(item.get("types") or ["scanned-fixed"]),
+                "name": item.get("alias") or Path(item["path"]).name or item["path"],
+                "alias": item.get("alias"),
+            }
+            for item in self.extra_paths
+        )
+        return paths
+
+    def _read_extra_paths(self) -> List[Dict[str, Any]]:
+        path = self._extra_paths_file()
+        if not path or not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception as exc:
+            logger.debug("Failed to read extra paths: %s", exc)
+            return []
+
+    def _write_extra_paths(self) -> None:
+        path = self._extra_paths_file()
+        if not path:
+            raise HTTPException(status_code=500, detail="Cache directory is not available")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self.extra_paths, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _extra_paths_file(self) -> Optional[Path]:
+        if not self.cache_base_dir:
+            return None
+        return Path(self.cache_base_dir) / "iib_cache" / "comfyui_lite" / "extra_paths.json"
+
+    def _upsert_extra_path(self, path: str, types: List[str], alias: Optional[str] = None) -> None:
+        norm = str(Path(path).expanduser().resolve())
+        existing = next((item for item in self.extra_paths if item.get("path") == norm), None)
+        if existing:
+            merged = list(dict.fromkeys((existing.get("types") or []) + (types or [])))
+            existing["types"] = merged or ["scanned-fixed"]
+            if alias is not None:
+                existing["alias"] = alias
+        else:
+            self.extra_paths.append({"path": norm, "types": types or ["scanned-fixed"], "alias": alias})
+        self._write_extra_paths()
+
+    def _remove_extra_path(self, path: str, types: List[str]) -> None:
+        norm = str(Path(path).expanduser().resolve())
+        for item in list(self.extra_paths):
+            if item.get("path") != norm:
+                continue
+            if types:
+                item["types"] = [t for t in item.get("types", []) if t not in types]
+            if not types or not item.get("types"):
+                self.extra_paths.remove(item)
+        self._write_extra_paths()
+
     def _thumbnail_response(self, path: Path, t: str, size: str) -> FileResponse:
         if not self.cache_base_dir:
             raise HTTPException(status_code=500, detail="Cache directory is not available")
@@ -483,6 +971,52 @@ class ComfyUILiteApi:
         except Exception as exc:
             logger.debug("Failed to read ComfyUI geninfo for %s: %s", path, exc)
             return ""
+
+    def _read_app_fe_setting(self, name: str) -> Dict[str, Any]:
+        path = self._app_fe_setting_path(name)
+        if not path or not path.exists():
+            return {}
+        try:
+            value = path.read_text(encoding="utf-8")
+            return json.loads(value) if value else {}
+        except Exception as exc:
+            logger.debug("Failed to read app_fe_setting %s: %s", name, exc)
+            return {}
+
+    def _read_all_app_fe_settings(self) -> Dict[str, Dict[str, Any]]:
+        directory = self._app_fe_setting_dir()
+        if not directory or not directory.exists():
+            return {}
+        settings: Dict[str, Dict[str, Any]] = {}
+        for item in directory.glob("*.json"):
+            settings[item.stem] = self._read_app_fe_setting(item.stem)
+        return settings
+
+    def _write_app_fe_setting(self, name: str, value: str) -> None:
+        path = self._app_fe_setting_path(name)
+        if not path:
+            raise HTTPException(status_code=500, detail="Cache directory is not available")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Validate JSON before persisting; frontend expects parsed objects on next load.
+        json.loads(value or "{}")
+        path.write_text(value or "{}", encoding="utf-8")
+
+    def _delete_app_fe_setting(self, name: str) -> None:
+        path = self._app_fe_setting_path(name)
+        if path and path.exists():
+            path.unlink()
+
+    def _app_fe_setting_path(self, name: str) -> Optional[Path]:
+        directory = self._app_fe_setting_dir()
+        if not directory:
+            return None
+        safe_name = "".join(c if c.isalnum() or c in "_-" else "_" for c in name)
+        return directory / f"{safe_name}.json"
+
+    def _app_fe_setting_dir(self) -> Optional[Path]:
+        if not self.cache_base_dir:
+            return None
+        return Path(self.cache_base_dir) / "iib_cache" / "comfyui_lite" / "app_fe_setting"
 
     def _write_geninfo_override(self, path: Path, exif: str) -> None:
         override = self._geninfo_override_path(path)

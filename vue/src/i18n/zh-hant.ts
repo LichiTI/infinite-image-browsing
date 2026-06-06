@@ -110,7 +110,7 @@ export const zhHant: Partial<IIBI18nMap> = {
   saveCompleted: '保存完成',
   openThisAppInNewWindow: '在新窗口打開本應用',
   readonly: '只讀',
-  accessLimited: '訪問受限',
+  accessLimited: 'ComfyUI內部資料夾',
   selectFolder: '選擇文件夾',
   openFileLocationInNewTab: '在新標籤頁打開文件位置',
   copyTo: '複製到',
@@ -342,7 +342,7 @@ export const zhHant: Partial<IIBI18nMap> = {
   toggleTagSelection: '切換 "{tag}" 標籤選中',
   changlog: '更新紀錄',
   accessControlModeTips:
-    '為確保數據安全,您目前正以訪問控制模式運行,僅能訪問授權文件夾。您可以通過編輯本拓展根目錄的下.env文件來調整訪問權限設置 (IIB_ACCESS_CONTROL) .如果不存在.env文件, 你可以將.env.example文件複製並重命名為.env',
+    '本插件預設載入 ComfyUI 內部資料夾。你也可以點擊新增，輸入外部資料夾路徑來瀏覽外部資料夾和檔案。',
   dontShowAgain: '不再顯示',
   defaultSortingMethod: '默認排序方法',
   defaultViewMode: '默認檢視模式',

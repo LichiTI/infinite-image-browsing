@@ -107,7 +107,7 @@ export const zhHans = {
   saveCompleted: '保存完成',
   openThisAppInNewWindow: '在新窗口打开本应用',
   readonly: '只读',
-  accessLimited: '访问受限',
+  accessLimited: 'ComfyUI内部文件夹',
   selectFolder: '选择文件夹',
   openFileLocationInNewTab: '在新标签页打开文件位置',
   copyTo: '复制到',
@@ -335,7 +335,7 @@ export const zhHans = {
   toggleTagSelection: '切换 "{tag}" 标签选中',
   changlog: '更新日志',
   accessControlModeTips:
-    '为确保数据安全，您当前正以访问控制模式运行，仅能访问授权文件夹。您可以通过编辑本拓展根目录的下.env文件来调整访问权限设置 (IIB_ACCESS_CONTROL) .如果不存在.env文件, 你可以将.env.example文件复制并重命名为.env',
+    '本插件默认加载 ComfyUI 内部文件夹。你也可以点击添加，输入外部文件夹路径来浏览外部文件夹和文件。',
   dontShowAgain: '不再显示',
   defaultSortingMethod: '默认排序方法',
   defaultViewMode: '默认查看模式',

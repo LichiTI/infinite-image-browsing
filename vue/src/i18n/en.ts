@@ -110,7 +110,7 @@ You can specify which snapshot to restore to when starting IIB in the global set
   saveCompleted: 'Save completed',
   openThisAppInNewWindow: 'Open IIB in a new window',
   readonly: 'Read-only',
-  accessLimited: 'Access Limited',
+  accessLimited: 'ComfyUI internal folders',
   selectFolder: 'Select Folder',
   openFileLocationInNewTab: 'Open File Location in New Tab',
   copyTo: 'Copy to',
@@ -246,7 +246,7 @@ You can specify which snapshot to restore to when starting IIB in the global set
   showPreviewImage: 'Show Preview Image',
   dontShowAgain: 'Don\'t show again',
   accessControlModeTips:
-    'To ensure data security, you are currently running in access control mode, which only allows access to authorized folders. You can adjust the access permissions settings (IIB_ACCESS_CONTROL) by editing the .env file in the root directory of this extension. If the .env file does not exist, you can copy the .env.example file and rename it to .env.',
+    'This plugin loads ComfyUI internal folders by default. You can also click Add and enter an external folder path to browse external folders and files.',
   changlog: 'Change log',
   clear: 'Clear',
   toggleTagSelection: 'Toggle Selection of Tag "{tag}"',
