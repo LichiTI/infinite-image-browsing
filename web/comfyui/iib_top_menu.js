@@ -18,22 +18,49 @@ const openIIB = (event = {}) => {
     window.open(url, "_blank");
 };
 
+const loadedWorkflowMessageIds = new Set();
+
+const setWorkflowNameFromIIB = (name) => {
+    if (!name) return;
+    try {
+        if (app.workflowManager?.activeWorkflow) {
+            app.workflowManager.activeWorkflow.name = name;
+            app.workflowManager.activeWorkflow.filename = name;
+            app.workflowManager.activeWorkflow.path = name;
+        }
+        if (app.extensionManager?.workflow) {
+            app.extensionManager.workflow.name = name;
+            app.extensionManager.workflow.filename = name;
+        }
+        document.title = `${name} - ComfyUI`;
+    } catch (error) {
+        console.warn("Infinite Image Browsing: failed to set workflow name", error);
+    }
+};
+
 const openWorkflowFromIIB = async (payload) => {
+    if (payload?.id) {
+        if (loadedWorkflowMessageIds.has(payload.id)) return;
+        loadedWorkflowMessageIds.add(payload.id);
+        setTimeout(() => loadedWorkflowMessageIds.delete(payload.id), 30000);
+    }
     const data = payload?.workflow;
     const workflow = data?.workflow ?? data;
+    const workflowName = payload?.workflowName || (payload?.file ? payload.file.split(/[\\/]/).pop() : "");
     if (!workflow) {
         alert("这张图片里没有保存的 ComfyUI 工作流");
         return;
     }
     try {
         if (typeof app.loadGraphData === "function") {
-            await app.loadGraphData(workflow);
+            await app.loadGraphData(workflow, true, true, workflowName);
         } else if (app.graph && typeof app.graph.configure === "function") {
             app.graph.configure(workflow);
             app.graph.setDirtyCanvas?.(true, true);
         } else {
             throw new Error("当前 ComfyUI 前端不支持 loadGraphData");
         }
+        setWorkflowNameFromIIB(workflowName);
         window.focus();
         console.info("Infinite Image Browsing: loaded workflow from image", payload?.file);
     } catch (error) {

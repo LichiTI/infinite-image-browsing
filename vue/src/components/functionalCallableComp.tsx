@@ -64,19 +64,26 @@ const openMediaModalImpl = (
     if (global.conf?.launch_mode !== 'comfyui') return
     try {
       const workflow = await getComfyUIWorkflow(file.fullpath)
-      const payload = { type: 'iib-open-comfyui-workflow', workflow, file: file.fullpath }
+      const payload = {
+        type: 'iib-open-comfyui-workflow',
+        id: `${Date.now()}-${Math.random()}`,
+        workflow,
+        file: file.fullpath,
+        workflowName: file.name
+      }
       const targetWindows = [window.opener, window.parent && window.parent !== window ? window.parent : undefined]
         .filter(Boolean) as Window[]
-      targetWindows.forEach(targetWindow => targetWindow.postMessage(payload, window.location.origin))
-      try {
-        new BroadcastChannel('iib-comfyui-bridge').postMessage(payload)
-      } catch (error) {
-        console.warn('Failed to broadcast ComfyUI workflow payload:', error)
-      }
-      if (!targetWindows.length) {
-        message.info(t('openComfyUIOriginalTabTip'))
-      } else {
+      if (targetWindows.length) {
+        targetWindows.forEach(targetWindow => targetWindow.postMessage(payload, window.location.origin))
         message.success(t('openSavedWorkflow'))
+      } else {
+        try {
+          new BroadcastChannel('iib-comfyui-bridge').postMessage(payload)
+          message.info(t('openComfyUIOriginalTabTip'))
+        } catch (error) {
+          console.warn('Failed to broadcast ComfyUI workflow payload:', error)
+          message.error(t('workflowNotFound'))
+        }
       }
     } catch (error) {
       console.error('Open ComfyUI workflow error:', error)
