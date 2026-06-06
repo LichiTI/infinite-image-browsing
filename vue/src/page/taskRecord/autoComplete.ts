@@ -25,17 +25,20 @@ export const getQuickMovePaths = async ({
 }: ReturnTypeAsync<typeof getGlobalSetting>): Promise<QuickMovePath[]> => {
   if (launch_mode === 'comfyui') {
     const g = useGlobalStore() as any
-    g.extraPathAliasMap = {}
+    g.extraPathAliasMap = extra_paths
+      .filter((v: ExtraPathModel) => v.alias)
+      .reduce((acc, v: ExtraPathModel) => {
+        acc[v.alias!] = v.path
+        return acc
+      }, {} as Record<string, string>)
     await delay(0)
-    const outputPath = extra_paths[0]
-    if (!outputPath) return []
-    return [{
-      key: 'comfyui_output',
-      zh: '输出文件夹',
-      dir: outputPath.path,
-      can_delete: false,
-      types: ['walk', 'scanned', 'scanned-fixed', 'cli_access_only']
-    }]
+    return extra_paths.map((pathModel: ExtraPathModel, idx: number): QuickMovePath => ({
+      key: idx === 0 ? 'comfyui_output' : pathModel.path,
+      zh: pathModel.alias || (idx === 0 ? '输出文件夹' : g.getShortPath(pathModel.path)),
+      dir: pathModel.path,
+      can_delete: idx !== 0,
+      types: idx === 0 ? ['walk', 'scanned-fixed', 'cli_access_only'] : pathModel.types
+    }))
   }
   
   const picked = pick(

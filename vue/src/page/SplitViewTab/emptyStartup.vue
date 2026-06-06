@@ -126,6 +126,10 @@ const normalModeSupportedDir = computed(() =>
     return ts.includes('cli_access_only') || ts.includes('preset') || ts.includes('scanned') || ts.includes('scanned-fixed')
   })
 )
+const normalModeButtonTypes = (dir: { types: (ExtraPathType | 'preset')[] }) => {
+  if (isComfyUI.value) return ['scanned-fixed' as const]
+  return dir.types.filter((v: ExtraPathType | 'preset') => v !== 'walk')
+}
 
 const machine = computed(() => {
   if (isTauri) return 'desktop application'
@@ -313,7 +317,7 @@ const modes = computed(() => {
             v-for="dir in normalModeSupportedDir"
             :key="dir.key">
 
-            <actionContextMenu v-for="t in dir.types.filter((v: ExtraPathType | 'preset') => v !== 'walk')" :key="t"
+            <actionContextMenu v-for="t in normalModeButtonTypes(dir)" :key="t"
               @open-in-new-tab="openInNewTab('local', dir.dir, t)"
               @open-on-the-right="openOnTheRight('local', dir.dir, t)">
 

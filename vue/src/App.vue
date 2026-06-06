@@ -99,6 +99,10 @@ const presistKeysFiltered = presistKeys.filter(v => !['tabListHistoryRecord', 'r
 
 const openComfyUIOutputAsDefault = () => {
   if (globalStore.conf?.launch_mode !== 'comfyui') return
+  const hasUsablePane = globalStore.tabList.some(tab =>
+    tab.panes.some((pane: any) => pane.type !== 'empty' && pane.path)
+  )
+  if (hasUsablePane) return
   const output = globalStore.quickMovePaths[0]
   if (!output?.dir) return
 
