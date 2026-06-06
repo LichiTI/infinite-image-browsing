@@ -568,6 +568,7 @@ export const zhHans = {
 
   openSavedWorkflow: '打开保存的工作流',
   workflowNotFound: '这张图片里没有保存的 ComfyUI 工作流',
+  openComfyUIOriginalTabTip: '已发送工作流打开请求，请回到 ComfyUI 原页面查看。若没有反应，请从 ComfyUI 页面重新打开 IIB。',
   // ===== 提示词编辑 =====
   editPrompt: '编辑',
   editPromptTitle: '编辑提示词 - {name}',

@@ -590,6 +590,7 @@ You can specify which snapshot to restore to when starting IIB in the global set
 
   openSavedWorkflow: 'Open saved workflow',
   workflowNotFound: 'No saved ComfyUI workflow was found in this image',
+  openComfyUIOriginalTabTip: 'Workflow open request sent. Please return to the original ComfyUI tab. If nothing happens, reopen IIB from the ComfyUI page.',
   // ===== Prompt Editing =====
   editPrompt: 'Edit',
   editPromptTitle: 'Edit Prompt - {name}',

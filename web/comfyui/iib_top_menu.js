@@ -165,16 +165,32 @@ const replaceActionBarButtonIcon = () => {
     if (buttons.length === 0) requestAnimationFrame(replaceActionBarButtonIcon);
 };
 
+let workflowBroadcastChannel = null;
+
+const setupWorkflowBridge = () => {
+    window.addEventListener("message", (event) => {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.type === "iib-open-comfyui-workflow") {
+            openWorkflowFromIIB(event.data);
+        }
+    });
+    try {
+        workflowBroadcastChannel = new BroadcastChannel("iib-comfyui-bridge");
+        workflowBroadcastChannel.onmessage = (event) => {
+            if (event.data?.type === "iib-open-comfyui-workflow") {
+                openWorkflowFromIIB(event.data);
+            }
+        };
+    } catch (error) {
+        console.warn("Infinite Image Browsing: BroadcastChannel bridge unavailable", error);
+    }
+};
+
 const createExtensionObject = (useActionBar) => {
     const extensionObj = {
         name: "InfiniteImageBrowsing.TopMenu",
         async setup() {
-            window.addEventListener("message", (event) => {
-                if (event.origin !== window.location.origin) return;
-                if (event.data?.type === "iib-open-comfyui-workflow") {
-                    openWorkflowFromIIB(event.data);
-                }
-            });
+            setupWorkflowBridge();
             injectStyles();
             if (!useActionBar) {
                 await attachLegacyTopMenuButton();

@@ -570,6 +570,7 @@ export const zhHant: Partial<IIBI18nMap> = {
 
   openSavedWorkflow: '開啟儲存的工作流',
   workflowNotFound: '這張圖片裡沒有儲存的 ComfyUI 工作流',
+  openComfyUIOriginalTabTip: '已送出工作流開啟請求，請回到 ComfyUI 原頁面查看。若沒有反應，請從 ComfyUI 頁面重新開啟 IIB。',
   // ===== 提示詞編輯 =====
   editPrompt: '編輯',
   editPromptTitle: '編輯提示詞 - {name}',
