@@ -5,6 +5,8 @@ import hashlib
 import mimetypes
 import os
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any, Dict, Iterable, List, Optional
 import urllib.parse
 
@@ -41,6 +43,15 @@ index_html_path = _PACKAGE_ROOT / "vue" / "dist" / "index.html"
 
 class PathsReq(BaseModel):
     paths: List[str]
+
+
+class PathReq(BaseModel):
+    path: str
+
+
+class UpdateExifReq(BaseModel):
+    path: str
+    exif: str
 
 
 class ComfyUILiteConfig:
@@ -197,6 +208,49 @@ class ComfyUILiteApi:
         async def image_geninfo(path: str):
             target = self._resolve_trusted_path(path)
             return self._read_comfyui_geninfo(target)
+
+        @app.post(f"{base}/update_exif")
+        async def update_exif(req: UpdateExifReq):
+            # The full backend stores edited prompt metadata in IIB's DB. The
+            # ComfyUI-lite backend intentionally has no DB, so keep a small
+            # sidecar store next to the image cache and let /image_geninfo read
+            # it back. This restores the prompt editor UX without mutating the
+            # original generated file.
+            target = self._resolve_trusted_path(req.path)
+            if not target.exists() or not target.is_file() or not is_image_file(str(target)):
+                raise HTTPException(status_code=404, detail="Image does not exist")
+            self._write_geninfo_override(target, req.exif)
+            return {"success": True, "message": "Prompt metadata saved"}
+
+        @app.post(f"{base}/open_with_default_app")
+        async def open_with_default_app(req: PathReq):
+            target = self._resolve_trusted_path(req.path, allow_root_parent=True)
+            if not target.exists():
+                raise HTTPException(status_code=404, detail="Path does not exist")
+            self._open_path_with_os(target)
+            return {"success": True}
+
+        @app.post(f"{base}/open_folder")
+        async def open_folder(req: PathReq):
+            target = self._resolve_trusted_path(req.path, allow_root_parent=True)
+            if not target.exists():
+                raise HTTPException(status_code=404, detail="Path does not exist")
+            self._open_path_with_os(target if target.is_dir() else target.parent)
+            return {"success": True}
+
+        @app.post(f"{base}/send_img_path")
+        async def send_img_path(path: str):
+            # SD-WebUI uses this endpoint to transfer an image to txt2img/img2img.
+            # In ComfyUI mode the actual transfer is done by frontend messages;
+            # accepting the request prevents toolbar buttons from failing with 404.
+            target = self._resolve_trusted_path(path)
+            if not target.exists() or not target.is_file():
+                raise HTTPException(status_code=404, detail="Image does not exist")
+            return {"success": True}
+
+        @app.get(f"{base}/gen_info_completed")
+        async def gen_info_completed():
+            return True
 
         @app.post(f"{base}/image_geninfo_batch")
         async def image_geninfo_batch(req: PathsReq):
@@ -415,6 +469,12 @@ class ComfyUILiteApi:
     def _read_comfyui_geninfo(self, path: Path) -> str:
         if not path.exists() or not path.is_file() or not is_image_file(str(path)):
             return ""
+        override = self._geninfo_override_path(path)
+        if override and override.exists():
+            try:
+                return override.read_text(encoding="utf-8")
+            except Exception as exc:
+                logger.debug("Failed to read ComfyUI geninfo override for %s: %s", path, exc)
         try:
             with Image.open(path) as img:
                 if ComfyUIParser.test(img, str(path)):
@@ -423,6 +483,31 @@ class ComfyUILiteApi:
         except Exception as exc:
             logger.debug("Failed to read ComfyUI geninfo for %s: %s", path, exc)
             return ""
+
+    def _write_geninfo_override(self, path: Path, exif: str) -> None:
+        override = self._geninfo_override_path(path)
+        if not override:
+            raise HTTPException(status_code=500, detail="Cache directory is not available")
+        override.parent.mkdir(parents=True, exist_ok=True)
+        override.write_text(exif, encoding="utf-8")
+
+    def _geninfo_override_path(self, path: Path) -> Optional[Path]:
+        if not self.cache_base_dir:
+            return None
+        stat = path.stat()
+        key = hashlib.md5(f"{path}|{stat.st_mtime_ns}".encode("utf-8")).hexdigest()
+        return Path(self.cache_base_dir) / "iib_cache" / "comfyui_lite" / "geninfo_overrides" / f"{key}.txt"
+
+    def _open_path_with_os(self, path: Path) -> None:
+        try:
+            if os.name == "nt":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to open path: {exc}")
 
     def _long_cache_headers(self, filename: Optional[str] = None) -> Dict[str, str]:
         headers = {

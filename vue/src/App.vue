@@ -277,7 +277,7 @@ onMounted(async () => {
   <SmartOrganizeConfigModal v-if="globalStore.conf?.launch_mode !== 'comfyui'" />
 
   <!-- Prompt Editor Modal (自包含组件，通过全局事件控制) -->
-  <PromptEditorModal v-if="globalStore.conf?.launch_mode !== 'comfyui'" />
+  <PromptEditorModal />
 
   <!-- Fullscreen Loading for Moving Files -->
   <div v-if="isMovingFiles" class="moving-files-overlay">

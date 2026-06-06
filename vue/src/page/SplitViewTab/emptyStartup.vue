@@ -338,7 +338,7 @@ const modes = computed(() => {
       <div class="feature-item">
         <h2>{{ $t('launch') }}</h2>
         <ul>
-          <li v-for="comp in Object.keys(compCnMap) as TabPane['type'][]" :key="comp" class="item"
+          <li v-for="comp in Object.keys(compCnMap).filter(comp => !isComfyUI || comp !== 'local') as TabPane['type'][]" :key="comp" class="item"
             @click.prevent="openInCurrentTab(comp)">
             <span class="text line-clamp-1">{{ compCnMap[comp] }}</span>
           </li>
