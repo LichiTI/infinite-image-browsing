@@ -39,11 +39,12 @@ class ComfyUIParser:
                     meta={"final_width": width, "final_height": height}
                 )
             )
+        params = params or {}
         return ImageGenerationInfo(
             info,
             ImageGenerationParams(
-                meta=params["meta"] | {"final_width": width, "final_height": height},
-                pos_prompt=params["pos_prompt"],
+                meta=params.get("meta", {}) | {"final_width": width, "final_height": height},
+                pos_prompt=params.get("pos_prompt", []),
                 extra=params,
             ),
         )

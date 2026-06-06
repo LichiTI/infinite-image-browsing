@@ -745,9 +745,13 @@ def get_comfyui_exif_data(img: Image):
     }
 
 def comfyui_exif_data_to_str(data):
-    res = data["pos_prompt_raw"] + "\nNegative prompt: " + data["neg_prompt_raw"] + "\n"
+    if not data:
+        return ""
+    pos_prompt_raw = data.get("pos_prompt_raw", "")
+    neg_prompt_raw = data.get("neg_prompt_raw", "")
+    res = pos_prompt_raw + "\nNegative prompt: " + neg_prompt_raw + "\n"
     meta_arr = []
-    for k,v in data["meta"].items():
+    for k,v in data.get("meta", {}).items():
         meta_arr.append(f'{k}: {v}')
     return res + ", ".join(meta_arr)
 

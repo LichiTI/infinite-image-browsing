@@ -216,6 +216,21 @@ class ComfyUILiteApi:
             # keep the old frontend contract without emitting 404s.
             return {path: [] for path in req.paths}
 
+        @app.post(f"{base}/batch_top_4_media_info")
+        async def batch_top_4_media_info(req: PathsReq):
+            res: Dict[str, List[Dict[str, Any]]] = {}
+            for item in req.paths:
+                try:
+                    folder = self._resolve_trusted_path(item)
+                    if not folder.exists() or not folder.is_dir():
+                        res[item] = []
+                        continue
+                    res[item] = self._top_media_info(folder)
+                except Exception as exc:
+                    logger.debug("Failed to read directory cover for %s: %s", item, exc)
+                    res[item] = []
+            return res
+
         @app.get(f"{base}/db/basic_info")
         async def get_db_basic_info():
             return {"img_count": 0, "tags": [], "expired": False, "expired_dirs": []}
@@ -335,6 +350,31 @@ class ComfyUILiteApi:
 
         self.folder_cache[cache_key] = _FolderCacheEntry(stat.st_mtime_ns, files)
         return files
+
+    def _top_media_info(self, folder: Path, limit: int = 4) -> List[Dict[str, Any]]:
+        media_files: List[Dict[str, Any]] = []
+        try:
+            entries = sorted(
+                os.scandir(folder),
+                key=lambda entry: entry.stat().st_ctime,
+                reverse=True,
+            )
+        except OSError as exc:
+            logger.debug("Unable to scan directory cover for %s: %s", folder, exc)
+            return media_files
+
+        for entry in entries:
+            try:
+                if not entry.is_file(follow_symlinks=False) or not is_media_file(entry.path):
+                    continue
+                info = self._file_info(Path(entry.path))
+                info["media_type"] = "video" if get_video_type(entry.path) else "image"
+                media_files.append(info)
+                if len(media_files) >= limit:
+                    break
+            except Exception as exc:
+                logger.debug("Skip directory cover item %s: %s", entry.path, exc)
+        return media_files
 
     def _thumbnail_response(self, path: Path, t: str, size: str) -> FileResponse:
         if not self.cache_base_dir:
