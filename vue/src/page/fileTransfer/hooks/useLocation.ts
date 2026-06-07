@@ -242,6 +242,9 @@ export function useLocation () {
    * 上面那个是Force
    */
   const lazyRefresh = (async (isPollRefresh = false) => {
+    if (global.conf?.launch_mode === 'comfyui' && isPollRefresh !== true) {
+      return
+    }
     
     if (isPollRefresh === true && previewing.value) {
       return // fullscreen previewing时不刷新

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch, ref } from 'vue'
 import { getGlobalSetting, setAppFeSetting, getComfyUIWorkflow } from './api'
-import { useGlobalStore, presistKeys, type FileTransferTabPane } from './store/useGlobalStore'
+import { useGlobalStore, presistKeys } from './store/useGlobalStore'
 import { useWorkspeaceSnapshot } from './store/useWorkspeaceSnapshot'
 import { getQuickMovePaths } from '@/page/taskRecord/autoComplete'
 import SplitViewTab from '@/page/SplitViewTab/SplitViewTab.vue'
@@ -97,28 +97,14 @@ const handleOrganizePreviewCancel = () => {
 
 const presistKeysFiltered = presistKeys.filter(v => !['tabListHistoryRecord', 'recent'].includes(v))
 
-const openComfyUIOutputAsDefault = () => {
+const openComfyUIEmptyStartPage = () => {
   if (globalStore.conf?.launch_mode !== 'comfyui') return
   const hasUsablePane = globalStore.tabList.some(tab =>
     tab.panes.some((pane: any) => pane.type !== 'empty' && pane.path)
   )
-  if (hasUsablePane) {
-    if (globalStore.tabList.length === 1 && globalStore.tabList[0]?.panes.length === 1) return
-    const emptyPane = globalStore.createEmptyPane()
-    globalStore.tabList = [{ panes: [emptyPane], key: emptyPane.key, id: 'comfyui-empty-tab' }]
-    return
-  }
-  const output = globalStore.quickMovePaths[0]
-  if (!output?.dir) return
-
-  const pane: FileTransferTabPane = {
-    type: 'local',
-    name: '输出文件夹',
-    key: 'comfyui-output',
-    path: output.dir,
-    mode: 'scanned-fixed'
-  }
-  globalStore.tabList = [{ panes: [pane], key: pane.key, id: 'comfyui-output-tab' }]
+  if (hasUsablePane) return
+  const emptyPane = globalStore.createEmptyPane()
+  globalStore.tabList = [{ panes: [emptyPane], key: emptyPane.key, id: 'comfyui-empty-tab' }]
   globalStore.recent = []
 }
 
@@ -191,7 +177,7 @@ useGlobalEventListen('updateGlobalSetting', async () => {
   }
   watchGlobalSettingChange()
   if (resp.launch_mode === 'comfyui') {
-    openComfyUIOutputAsDefault()
+    openComfyUIEmptyStartPage()
   } else {
     restoreWorkspaceSnapshot()
   }
