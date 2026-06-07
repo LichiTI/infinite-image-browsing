@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import asyncio
 import hashlib
 import json
 import mimetypes
@@ -174,7 +175,7 @@ class ComfyUILiteApi:
             folder = self._resolve_trusted_path(folder_path, allow_root_parent=True)
             if not folder.exists() or not folder.is_dir():
                 raise HTTPException(status_code=404, detail="Folder does not exist")
-            return {"files": self._list_folder(folder)}
+            return {"files": await asyncio.to_thread(self._list_folder, folder)}
 
         @app.post(f"{base}/batch_get_files_info")
         async def batch_get_files_info(req: PathsReq):
@@ -182,7 +183,7 @@ class ComfyUILiteApi:
             for item in req.paths:
                 try:
                     path = self._resolve_trusted_path(item, allow_root_parent=True)
-                    res[item] = self._file_info(path) if path.exists() else None
+                    res[item] = await asyncio.to_thread(self._file_info, path) if path.exists() else None
                 except HTTPException:
                     res[item] = None
             return res
@@ -195,7 +196,7 @@ class ComfyUILiteApi:
                 raise HTTPException(status_code=404, detail=f"Image does not exist: {target}")
             if not is_image_file(str(target)):
                 raise HTTPException(status_code=400, detail="Not an image file")
-            return self._thumbnail_response(target, t, size)
+            return await asyncio.to_thread(self._thumbnail_response, target, t, size)
 
         @app.get(f"{base}/img/{{filename}}")
         async def get_image(filename: str, path: str, t: str):
@@ -303,12 +304,12 @@ class ComfyUILiteApi:
             # Build a lightweight filename/path/prompt index for ComfyUI mode.
             # It does not implement the full IIB tag DB, but it makes the
             # search pages actually useful instead of only returning success.
-            self._rebuild_search_index()
+            await asyncio.to_thread(self._rebuild_search_index)
             return {"success": True, "count": len(self.search_index)}
 
         @app.post(f"{base}/db/rebuild_index")
         async def rebuild_index():
-            self._rebuild_search_index(force=True)
+            await asyncio.to_thread(self._rebuild_search_index, True)
             return {"success": True, "count": len(self.search_index)}
 
         @app.get(f"{base}/db/extra_paths")
@@ -336,14 +337,14 @@ class ComfyUILiteApi:
         @app.post(f"{base}/db/match_images_by_tags")
         async def match_images_by_tags(request: Request):
             body = await request.json()
-            self._ensure_search_index()
-            return self._match_images_by_tags(body)
+            await asyncio.to_thread(self._ensure_search_index)
+            return await asyncio.to_thread(self._match_images_by_tags, body)
 
         @app.post(f"{base}/db/search_by_substr")
         async def search_by_substr(request: Request):
             body = await request.json()
-            self._ensure_search_index()
-            return self._search_by_substr(body)
+            await asyncio.to_thread(self._ensure_search_index)
+            return await asyncio.to_thread(self._search_by_substr, body)
 
         @app.get(f"{base}/db/expired_dirs")
         async def expired_dirs():
@@ -373,7 +374,7 @@ class ComfyUILiteApi:
                     if not folder.exists() or not folder.is_dir():
                         res[item] = []
                         continue
-                    res[item] = self._top_media_info(folder)
+                    res[item] = await asyncio.to_thread(self._top_media_info, folder)
                 except Exception as exc:
                     logger.debug("Failed to read directory cover for %s: %s", item, exc)
                     res[item] = []
@@ -381,7 +382,7 @@ class ComfyUILiteApi:
 
         @app.get(f"{base}/db/basic_info")
         async def get_db_basic_info():
-            self._ensure_search_index()
+            await asyncio.to_thread(self._ensure_search_index)
             tags = sorted(self.tag_index.values(), key=lambda item: (-item["count"], item["type"], item["name"]))
             return {"img_count": len(self.search_index), "tags": tags, "expired": False, "expired_dirs": []}
 
@@ -391,8 +392,7 @@ class ComfyUILiteApi:
             if not target.exists() or not target.is_file() or not is_image_file(str(target)):
                 return {}
             try:
-                with Image.open(target) as img:
-                    return {k: str(v) for k, v in img.info.items() if not k.lower().startswith("exif")}
+                return await asyncio.to_thread(self._image_info_without_exif, target)
             except Exception as exc:
                 logger.error("Failed to get exif for %s: %s", target, exc)
                 return {}
@@ -925,6 +925,11 @@ class ComfyUILiteApi:
             if not types or not item.get("types"):
                 self.extra_paths.remove(item)
         self._write_extra_paths()
+
+    def _image_info_without_exif(self, path: Path) -> Dict[str, str]:
+        with Image.open(path) as img:
+            return {k: str(v) for k, v in img.info.items() if not k.lower().startswith("exif")}
+
 
     def _thumbnail_response(self, path: Path, t: str, size: str) -> FileResponse:
         if not self.cache_base_dir:

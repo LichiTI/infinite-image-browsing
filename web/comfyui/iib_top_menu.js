@@ -4,6 +4,7 @@ const BUTTON_TOOLTIP = "打开 Infinite Image Browsing（图片浏览器）";
 const IIB_PATH = "/iib";
 const BUTTON_GROUP_CLASS = "iib-top-menu-group";
 const MAX_ATTACH_ATTEMPTS = 120;
+const MAX_ACTION_BAR_ICON_ATTEMPTS = 120;
 const MIN_VERSION_FOR_ACTION_BAR = [1, 33, 9];
 const NEW_WINDOW_FEATURES = "width=1400,height=900,resizable=yes,scrollbars=yes,status=yes";
 
@@ -182,14 +183,16 @@ const attachLegacyTopMenuButton = async (attempt = 0) => {
     settingsGroup.element.before(buttonGroup.element);
 };
 
-const replaceActionBarButtonIcon = () => {
+const replaceActionBarButtonIcon = (attempt = 0) => {
     const buttons = document.querySelectorAll(`button[aria-label="${BUTTON_TOOLTIP}"]`);
     buttons.forEach((button) => {
         button.classList.add("iib-top-menu-button");
         button.innerHTML = getIIBIcon();
         button.title = BUTTON_TOOLTIP;
     });
-    if (buttons.length === 0) requestAnimationFrame(replaceActionBarButtonIcon);
+    if (buttons.length === 0 && attempt < MAX_ACTION_BAR_ICON_ATTEMPTS) {
+        requestAnimationFrame(() => replaceActionBarButtonIcon(attempt + 1));
+    }
 };
 
 let workflowBroadcastChannel = null;
