@@ -157,7 +157,7 @@ class ComfyUILiteApi:
                 "is_win": os.name == "nt",
                 "home": "",
                 "sd_cwd": output,
-                "all_custom_tags": [],
+                "all_custom_tags": self._get_all_custom_tags(),
                 "extra_paths": self._global_extra_paths(),
                 "enable_access_control": False,
                 "launch_mode": "comfyui",
@@ -356,14 +356,40 @@ class ComfyUILiteApi:
 
         @app.get(f"{base}/db/img_selected_custom_tag")
         async def img_selected_custom_tag(path: str):
-            return []
+            return self._get_selected_custom_tags(path)
+
+        @app.post(f"{base}/db/add_custom_tag")
+        async def add_custom_tag(request: Request):
+            body = await request.json()
+            tag_name = str(body.get("tag_name") or "").strip()
+            if not tag_name:
+                raise HTTPException(status_code=400, detail="Invalid tag name")
+            return self._add_custom_tag(tag_name)
+
+        @app.post(f"{base}/db/update_tag")
+        async def update_tag(request: Request):
+            body = await request.json()
+            return self._update_custom_tag(body)
+
+        @app.post(f"{base}/db/remove_custom_tag")
+        async def remove_custom_tag(request: Request):
+            body = await request.json()
+            self._remove_custom_tag(body.get("tag_id"))
+            return {"success": True}
+
+        @app.post(f"{base}/db/toggle_custom_tag_to_img")
+        async def toggle_custom_tag_to_img(request: Request):
+            body = await request.json()
+            return self._toggle_custom_tag_to_img(body.get("tag_id"), body.get("img_path"))
+
+        @app.post(f"{base}/db/batch_update_image_tag")
+        async def batch_update_image_tag(request: Request):
+            body = await request.json()
+            return self._batch_update_image_tag(body)
 
         @app.post(f"{base}/db/get_image_tags")
         async def get_image_tags(req: PathsReq):
-            # The existing FileItem flow asks for tags for visible files. The
-            # ComfyUI-lite backend has no tag database, so return empty lists to
-            # keep the old frontend contract without emitting 404s.
-            return {path: [] for path in req.paths}
+            return {path: self._get_selected_custom_tags(path) for path in req.paths}
 
         @app.post(f"{base}/batch_top_4_media_info")
         async def batch_top_4_media_info(req: PathsReq):
@@ -383,7 +409,10 @@ class ComfyUILiteApi:
         @app.get(f"{base}/db/basic_info")
         async def get_db_basic_info():
             await asyncio.to_thread(self._ensure_search_index)
-            tags = sorted(self.tag_index.values(), key=lambda item: (-item["count"], item["type"], item["name"]))
+            tags = sorted(
+                [*self.tag_index.values(), *self._get_all_custom_tags()],
+                key=lambda item: (-item.get("count", 0), item.get("type", ""), item.get("name", "")),
+            )
             return {"img_count": len(self.search_index), "tags": tags, "expired": False, "expired_dirs": []}
 
         @app.get(f"{base}/image_exif")
@@ -729,6 +758,7 @@ class ComfyUILiteApi:
             except Exception:
                 pass
 
+        custom_images = self._read_custom_tag_state().get("images", {})
         matched: List[Dict[str, Any]] = []
         for item in self.search_index:
             fullpath = item.get("fullpath", "")
@@ -739,7 +769,7 @@ class ComfyUILiteApi:
                         continue
                 except Exception:
                     continue
-            item_tags = set(item.get("_tag_ids", []))
+            item_tags = set(item.get("_tag_ids", [])) | {str(v) for v in custom_images.get(self._normalize_custom_tag_image_path(fullpath), [])}
             if and_tags and not and_tags.issubset(item_tags):
                 continue
             if or_tags and not (or_tags & item_tags):
@@ -902,6 +932,188 @@ class ComfyUILiteApi:
         if not self.cache_base_dir:
             return None
         return Path(self.cache_base_dir) / "iib_cache" / "comfyui_lite" / "extra_paths.json"
+
+    def _custom_tags_file(self) -> Optional[Path]:
+        if not self.cache_base_dir:
+            return None
+        return Path(self.cache_base_dir) / "iib_cache" / "comfyui_lite" / "custom_tags.json"
+
+    def _read_custom_tag_state(self) -> Dict[str, Any]:
+        path = self._custom_tags_file()
+        if not path or not path.exists():
+            return {"next_id": 1, "tags": [], "images": {}}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("custom tag state must be an object")
+            data.setdefault("next_id", 1)
+            data.setdefault("tags", [])
+            data.setdefault("images", {})
+            if not isinstance(data["tags"], list):
+                data["tags"] = []
+            if not isinstance(data["images"], dict):
+                data["images"] = {}
+            return data
+        except Exception as exc:
+            logger.debug("Failed to read custom tags: %s", exc)
+            return {"next_id": 1, "tags": [], "images": {}}
+
+    def _write_custom_tag_state(self, state: Dict[str, Any]) -> None:
+        path = self._custom_tags_file()
+        if not path:
+            raise HTTPException(status_code=500, detail="Cache directory is not available")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _normalize_custom_tag_image_path(self, path: Any) -> str:
+        raw = str(path or "").strip()
+        if not raw:
+            return ""
+        try:
+            return str(Path(raw).expanduser().resolve())
+        except Exception:
+            return os.path.normpath(raw)
+
+    def _normalize_tag_id(self, tag_id: Any) -> Optional[int]:
+        try:
+            return int(tag_id)
+        except Exception:
+            return None
+
+    def _get_all_custom_tags(self) -> List[Dict[str, Any]]:
+        state = self._read_custom_tag_state()
+        tags = []
+        for tag in state.get("tags", []):
+            if not isinstance(tag, dict):
+                continue
+            tags.append({
+                "id": tag.get("id"),
+                "name": tag.get("name") or "",
+                "display_name": tag.get("display_name"),
+                "type": "custom",
+                "color": tag.get("color") or "",
+                "count": int(tag.get("count") or 0),
+            })
+        return tags
+
+    def _add_custom_tag(self, tag_name: str) -> Dict[str, Any]:
+        state = self._read_custom_tag_state()
+        clean_name = tag_name.strip()
+        for tag in state.get("tags", []):
+            if str(tag.get("name", "")).strip().lower() == clean_name.lower():
+                return tag
+        next_id = int(state.get("next_id") or 1)
+        tag = {"id": next_id, "name": clean_name, "display_name": None, "type": "custom", "color": "", "count": 0}
+        state["next_id"] = next_id + 1
+        state.setdefault("tags", []).append(tag)
+        self._write_custom_tag_state(state)
+        return tag
+
+    def _update_custom_tag(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        state = self._read_custom_tag_state()
+        tag_id = self._normalize_tag_id(payload.get("id"))
+        if tag_id is None:
+            raise HTTPException(status_code=400, detail="Invalid tag id")
+        for tag in state.get("tags", []):
+            if self._normalize_tag_id(tag.get("id")) == tag_id:
+                if "name" in payload:
+                    name = str(payload.get("name") or "").strip()
+                    if name:
+                        tag["name"] = name
+                if "display_name" in payload:
+                    tag["display_name"] = payload.get("display_name")
+                if "color" in payload:
+                    tag["color"] = str(payload.get("color") or "")
+                self._write_custom_tag_state(state)
+                return tag
+        raise HTTPException(status_code=404, detail="Tag not found")
+
+    def _remove_custom_tag(self, tag_id: Any) -> None:
+        state = self._read_custom_tag_state()
+        normalized = self._normalize_tag_id(tag_id)
+        if normalized is None:
+            return
+        state["tags"] = [tag for tag in state.get("tags", []) if self._normalize_tag_id(tag.get("id")) != normalized]
+        tag_id_s = str(normalized)
+        for image_path, tag_ids in list(state.get("images", {}).items()):
+            state["images"][image_path] = [v for v in tag_ids if str(v) != tag_id_s]
+            if not state["images"][image_path]:
+                del state["images"][image_path]
+        self._write_custom_tag_state(state)
+
+    def _recount_custom_tags(self, state: Dict[str, Any]) -> None:
+        counts: Dict[str, int] = {}
+        for tag_ids in state.get("images", {}).values():
+            for tag_id in tag_ids or []:
+                counts[str(tag_id)] = counts.get(str(tag_id), 0) + 1
+        for tag in state.get("tags", []):
+            tag["count"] = counts.get(str(tag.get("id")), 0)
+
+    def _get_selected_custom_tag_ids(self, path: Any) -> List[str]:
+        key = self._normalize_custom_tag_image_path(path)
+        if not key:
+            return []
+        state = self._read_custom_tag_state()
+        return [str(v) for v in state.get("images", {}).get(key, [])]
+
+    def _get_selected_custom_tags(self, path: Any) -> List[Dict[str, Any]]:
+        ids = set(self._get_selected_custom_tag_ids(path))
+        return [tag for tag in self._get_all_custom_tags() if str(tag.get("id")) in ids]
+
+    def _toggle_custom_tag_to_img(self, tag_id: Any, img_path: Any) -> Dict[str, bool]:
+        normalized = self._normalize_tag_id(tag_id)
+        image_key = self._normalize_custom_tag_image_path(img_path)
+        if normalized is None or not image_key:
+            raise HTTPException(status_code=400, detail="Invalid tag or image path")
+        state = self._read_custom_tag_state()
+        if not any(self._normalize_tag_id(tag.get("id")) == normalized for tag in state.get("tags", [])):
+            raise HTTPException(status_code=404, detail="Tag not found")
+        tag_id_s = str(normalized)
+        selected = [str(v) for v in state.setdefault("images", {}).get(image_key, [])]
+        is_remove = tag_id_s in selected
+        if is_remove:
+            selected = [v for v in selected if v != tag_id_s]
+        else:
+            selected.append(tag_id_s)
+        if selected:
+            state["images"][image_key] = selected
+        else:
+            state["images"].pop(image_key, None)
+        self._recount_custom_tags(state)
+        self._write_custom_tag_state(state)
+        return {"is_remove": is_remove}
+
+    def _batch_update_image_tag(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        tag_id = self._normalize_tag_id(payload.get("tag_id"))
+        action = str(payload.get("action") or "add")
+        paths = payload.get("paths") or payload.get("file_paths") or []
+        if tag_id is None or action not in {"add", "remove"}:
+            raise HTTPException(status_code=400, detail="Invalid request")
+        state = self._read_custom_tag_state()
+        if not any(self._normalize_tag_id(tag.get("id")) == tag_id for tag in state.get("tags", [])):
+            raise HTTPException(status_code=404, detail="Tag not found")
+        tag_id_s = str(tag_id)
+        images = state.setdefault("images", {})
+        updated = 0
+        for raw_path in paths:
+            image_key = self._normalize_custom_tag_image_path(raw_path)
+            if not image_key:
+                continue
+            selected = [str(v) for v in images.get(image_key, [])]
+            if action == "add" and tag_id_s not in selected:
+                selected.append(tag_id_s)
+                updated += 1
+            elif action == "remove" and tag_id_s in selected:
+                selected = [v for v in selected if v != tag_id_s]
+                updated += 1
+            if selected:
+                images[image_key] = selected
+            else:
+                images.pop(image_key, None)
+        self._recount_custom_tags(state)
+        self._write_custom_tag_state(state)
+        return {"success": True, "updated": updated}
+
 
     def _upsert_extra_path(self, path: str, types: List[str], alias: Optional[str] = None) -> None:
         norm = str(Path(path).expanduser().resolve())
