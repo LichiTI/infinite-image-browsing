@@ -4,7 +4,7 @@ const BUTTON_TOOLTIP = "打开 Infinite Image Browsing（图片浏览器）";
 const IIB_PATH = "/iib";
 const BUTTON_GROUP_CLASS = "iib-top-menu-group";
 const MAX_ATTACH_ATTEMPTS = 120;
-const MAX_ACTION_BAR_ICON_ATTEMPTS = 120;
+const ACTION_BAR_ICON_OBSERVER_TIMEOUT_MS = 60_000;
 const MIN_VERSION_FOR_ACTION_BAR = [1, 33, 9];
 const NEW_WINDOW_FEATURES = "width=1400,height=900,resizable=yes,scrollbars=yes,status=yes";
 
@@ -183,16 +183,39 @@ const attachLegacyTopMenuButton = async (attempt = 0) => {
     settingsGroup.element.before(buttonGroup.element);
 };
 
-const replaceActionBarButtonIcon = (attempt = 0) => {
-    const buttons = document.querySelectorAll(`button[aria-label="${BUTTON_TOOLTIP}"]`);
+const getActionBarButtons = () => Array.from(document.querySelectorAll("button")).filter((button) => (
+    button.getAttribute("aria-label") === BUTTON_TOOLTIP ||
+    button.getAttribute("title") === BUTTON_TOOLTIP
+));
+
+const replaceActionBarButtonIcon = () => {
+    const buttons = getActionBarButtons();
     buttons.forEach((button) => {
         button.classList.add("iib-top-menu-button");
         button.innerHTML = getIIBIcon();
         button.title = BUTTON_TOOLTIP;
     });
-    if (buttons.length === 0 && attempt < MAX_ACTION_BAR_ICON_ATTEMPTS) {
-        requestAnimationFrame(() => replaceActionBarButtonIcon(attempt + 1));
+    return buttons.length > 0;
+};
+
+const observeActionBarButtonIcon = () => {
+    if (replaceActionBarButtonIcon()) return;
+    if (!document.body) {
+        requestAnimationFrame(observeActionBarButtonIcon);
+        return;
     }
+
+    let scheduled = false;
+    const observer = new MutationObserver(() => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => {
+            scheduled = false;
+            replaceActionBarButtonIcon();
+        });
+    });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-label", "title", "class"] });
+    setTimeout(() => observer.disconnect(), ACTION_BAR_ICON_OBSERVER_TIMEOUT_MS);
 };
 
 let workflowBroadcastChannel = null;
@@ -225,7 +248,7 @@ const createExtensionObject = (useActionBar) => {
             if (!useActionBar) {
                 await attachLegacyTopMenuButton();
             } else {
-                requestAnimationFrame(replaceActionBarButtonIcon);
+                requestAnimationFrame(observeActionBarButtonIcon);
             }
             this.aboutPageBadges = [
                 {
@@ -240,7 +263,7 @@ const createExtensionObject = (useActionBar) => {
     if (useActionBar) {
         extensionObj.actionBarButtons = [
             {
-                icon: "icon-[mdi--image-multiple] size-4",
+                icon: "pi pi-images",
                 tooltip: BUTTON_TOOLTIP,
                 onClick: openIIB,
             },
