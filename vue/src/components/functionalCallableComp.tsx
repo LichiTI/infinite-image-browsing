@@ -136,17 +136,25 @@ const openMediaModalImpl = (
   const isTagStylePrompt = (tags: string[]): boolean => {
     if (tags.length === 0) return false
 
+    // 资源标签（lora/hypernet/lyco，原始或 HTML 转义形式）不参与"自然语言"判定，
+    // 否则单个较长的 lora 名字会把整段正常的 tag 风格提示词误判为自然语言而整体显示。
+    const resourceTagRe = /^(?:<|&lt;)(?:lora|hypernet|lyco):/i
     let totalLength = 0
+    let count = 0
     for (const tag of tags) {
+      if (resourceTagRe.test(tag)) continue
       const tagLength = getTextLength(tag)
       totalLength += tagLength
+      count++
 
       if (tagLength > 50) {
         return false
       }
     }
 
-    const avgLength = totalLength / tags.length
+    // 全是资源标签时仍按 tag 风格处理
+    if (count === 0) return true
+    const avgLength = totalLength / count
     if (avgLength > 30) {
       return false
     }
@@ -159,7 +167,12 @@ const openMediaModalImpl = (
     if (!text) return ''
 
     const specBreakTag = 'BREAK'
-    const values = text.replace(/&gt;\s/g, '> ,').replace(/\sBREAK\s/g, ',' + specBreakTag + ',')
+    const values = text
+      .replace(/&gt;\s/g, '> ,')
+      // 兼容未转义的资源标签 <lora:...> / <hypernet:...> / <lyco:...>，
+      // 它们之间通常用空格分隔（无逗号），这里把标签后的空格补成逗号以便正确拆分。
+      .replace(/(<(?:lora|hypernet|lyco):[^>]*>)\s/gi, '$1,')
+      .replace(/\sBREAK\s/g, ',' + specBreakTag + ',')
       .split(/[\n,]+/)
       .map(v => v.trim())
       .filter(v => v)
